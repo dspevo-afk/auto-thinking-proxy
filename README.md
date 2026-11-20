@@ -58,6 +58,100 @@ auto-flash -> high  msgs=290  shell failed ((?m)^\s*\w*(?:Error|Exception)(?::|$
 auto-flash -> none  msgs=334  new message, still looking (2), pool spent (1516/1500)
 ```
 
+## Installing it for a user (instructions for AI agents)
+
+If you are an AI agent setting this up on your user's computer, follow these steps in order. Ask the user before step 5 and step 6, because those change their agent config and add a program that starts at login.
+
+**1. Check Python.** Run `python3 --version` (on Windows, `python --version` or `py --version`). It needs 3.9 or newer. If Python is missing, ask the user to install it. Don't install it silently.
+
+**2. Get the code.**
+```bash
+git clone https://github.com/dspevo-afk/auto-thinking-proxy.git ~/auto-thinking-proxy
+cd ~/auto-thinking-proxy
+python3 -m unittest discover -s tests      # should end with "OK"
+```
+On Windows, clone into `%USERPROFILE%\auto-thinking-proxy` and use `python` or `py` instead of `python3`.
+
+**3. Find the user's model server.** This proxy sits in front of an OpenAI-compatible server that runs a *reasoning* model (llama.cpp `llama-server`, vLLM, LM Studio, Ollama's OpenAI endpoint, ...). Find its base URL in the user's agent config (look for a `baseURL` / `api_base` ending in `/v1`) or ask the user. Confirm it answers:
+```bash
+curl -s http://127.0.0.1:8080/v1/models          # replace with the real URL
+```
+Use the URL **without** the trailing `/v1` as `--upstream`. If the server is on another machine, use its address. The proxy itself should still listen only on `127.0.0.1`.
+
+**4. Start the proxy and test it.** Pick a free port (8090 by default):
+```bash
+python3 proxy.py --upstream http://127.0.0.1:8080 --listen 127.0.0.1:8090 --log auto-thinking.log
+```
+In a second terminal:
+```bash
+curl -s http://127.0.0.1:8090/v1/models
+curl -s http://127.0.0.1:8090/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"model":"MODEL_ID","messages":[{"role":"user","content":"Say hi"}],"reasoning_effort":"auto","max_tokens":50}'
+```
+Use a model id from the `/v1/models` list. The log should now contain a line like `auto -> low   msgs=1  new message`. If the upstream needs an API key, send the same `Authorization` header your agent uses; the proxy passes headers through unchanged and never stores them.
+
+**5. Point the agent at the proxy (ask the user first).** Back up the agent's config file before editing it. Then:
+- Change the provider's base URL to `http://127.0.0.1:8090/v1`, or add a new provider with that URL so the old one stays as a fallback.
+- Add reasoning-effort choices of `auto` and `auto-flash`, and make `auto-flash` the default if the user agrees. For OpenCode, see [`examples/opencode.jsonc`](examples/opencode.jsonc): variants with `"reasoningEffort": "auto-flash"`.
+- For other OpenAI-compatible agents, set the request's `reasoning_effort` to `auto-flash` wherever the agent lets you pick an effort level.
+
+Restart the agent, give it a small task, and check that the log shows a mix of `none`, `low` and (after any failed test or command) `high`.
+
+**6. Start it at login (ask the user first).** Replace the paths and the upstream URL with the real ones.
+
+*Linux (systemd user service)*, saved as `~/.config/systemd/user/auto-thinking-proxy.service`:
+```ini
+[Unit]
+Description=auto-thinking-proxy
+
+[Service]
+ExecStart=/usr/bin/python3 %h/auto-thinking-proxy/proxy.py --upstream http://127.0.0.1:8080 --listen 127.0.0.1:8090 --log %h/auto-thinking-proxy/auto-thinking.log
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+Then run `systemctl --user daemon-reload && systemctl --user enable --now auto-thinking-proxy`.
+
+*macOS (launchd)*, saved as `~/Library/LaunchAgents/com.auto-thinking-proxy.plist`, then `launchctl load ~/Library/LaunchAgents/com.auto-thinking-proxy.plist`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.auto-thinking-proxy</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/python3</string><string>/Users/USER/auto-thinking-proxy/proxy.py</string>
+    <string>--upstream</string><string>http://127.0.0.1:8080</string>
+    <string>--listen</string><string>127.0.0.1:8090</string>
+    <string>--log</string><string>/Users/USER/auto-thinking-proxy/auto-thinking.log</string>
+  </array>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+</dict></plist>
+```
+
+*Windows (Task Scheduler, no console window)*, in PowerShell:
+```powershell
+$py = (Get-Command pythonw).Source
+$dir = "$env:USERPROFILE\auto-thinking-proxy"
+$action = New-ScheduledTaskAction -Execute $py -WorkingDirectory $dir -Argument "`"$dir\proxy.py`" --upstream http://127.0.0.1:8080 --listen 127.0.0.1:8090 --log `"$dir\auto-thinking.log`""
+Register-ScheduledTask -TaskName "auto-thinking-proxy" -Action $action -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
+Start-ScheduledTask -TaskName "auto-thinking-proxy"
+```
+
+**7. Tell the user** what you changed (config file and backup location, port, startup entry), where the log is, and how to undo it.
+
+**Undo:** restore the agent config backup (or switch back to the old provider), then remove the startup entry:
+- Linux: `systemctl --user disable --now auto-thinking-proxy`
+- macOS: `launchctl unload ~/Library/LaunchAgents/com.auto-thinking-proxy.plist`
+- Windows: `Unregister-ScheduledTask -TaskName auto-thinking-proxy -Confirm:$false`
+
+Then delete the folder.
+
+**Troubleshooting**
+- *502 "upstream unreachable"*: the `--upstream` URL is wrong or the model server isn't running.
+- *The model always thinks, or never does*: the server may ignore `chat_template_kwargs`. Check the server's docs for its per-request thinking switch (some only honour `reasoning_effort`; run with `--no-template-kwargs` to send only that).
+- *Pools never run out*: the server doesn't stream `reasoning_content` (or `reasoning`) fields, so the proxy can't count thinking tokens. The level decisions still work.
+
 ## What we've measured (and what we haven't)
 
 This came out of running OpenCode against a local mixture-of-experts model (Swift 1.5 Flash Next, IQ3_XXS) on four 16 GB Tesla P100s. The proxy here is a clean stand-alone extract of the logic in that setup's bridge.
