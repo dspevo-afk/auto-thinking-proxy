@@ -92,9 +92,10 @@ class EndToEnd(unittest.TestCase):
         c.close()
 
     def test_non_auto_request_untouched(self):
-        self.post({'model': 'm', 'messages': [{'role': 'user', 'content': 'hi'}], 'reasoning_effort': 'high'})
-        self.assertEqual(SEEN[-1]['reasoning_effort'], 'high')
-        self.assertNotIn('chat_template_kwargs', SEEN[-1])
+        for effort in ('high', 'off', 'none'):
+            self.post({'model': 'm', 'messages': [{'role': 'user', 'content': 'hi'}], 'reasoning_effort': effort})
+            self.assertEqual(SEEN[-1]['reasoning_effort'], effort)
+            self.assertNotIn('chat_template_kwargs', SEEN[-1])
 
     def test_auto_rewrites_request(self):
         msgs = [{'role': 'user', 'content': 'go'},

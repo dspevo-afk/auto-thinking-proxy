@@ -53,12 +53,9 @@ def apply_policy(data: dict):
     """Rewrites a chat request in place. Returns the pool anchor to charge (or None)."""
     rsn = data.get('reasoning')
     variant = str(data.get('reasoning_effort') or (rsn.get('effort') if isinstance(rsn, dict) else '') or '').lower()
-    if variant == 'off':
-        variant, level, budget, anchor, why = 'off', 'none', None, None, 'effort off'
-    elif variant in autothink.VARIANTS:
-        level, budget, anchor, why = autothink.decide(data.get('messages'), variant, POOLS)
-    else:
+    if variant not in autothink.VARIANTS:
         return None
+    level, budget, anchor, why = autothink.decide(data.get('messages'), variant, POOLS)
     data['reasoning_effort'] = level
     data.pop('reasoning', None)
     if CFG.template_kwargs:                       # llama.cpp / vLLM style per-request thinking switch
@@ -171,7 +168,7 @@ def main(argv=None):
     ap.add_argument('--no-template-kwargs', action='store_true',
                     help='do not set chat_template_kwargs.enable_thinking (only reasoning_effort is rewritten)')
     ap.add_argument('--budget-field', default='thinking_budget_tokens',
-                    help='request field for the per-step thinking cap of pooled variants ("" to omit)')
+                    help='request field for the per-step thinking cap of auto-flash ("" to omit)')
     args = ap.parse_args(argv)
     CFG.upstream = urllib.parse.urlsplit(args.upstream)
     CFG.log_path = args.log

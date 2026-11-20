@@ -64,15 +64,11 @@ class Decide(unittest.TestCase):
         msgs = [SYS, user(), call('1', 'edit', filePath='a.ts'), result('1', 'LSP errors detected in a.ts')]
         self.assertEqual(autothink.decide(msgs, 'auto')[0], 'high')
 
-    def test_lite_and_errlow(self):
-        fail = [SYS, user(), call('1', 'bash', command='pytest'), result('1', 'Traceback (most recent call last):')]
-        self.assertEqual(autothink.decide([SYS, user()], 'auto-lite')[0], 'none')
-        self.assertEqual(autothink.decide(fail, 'auto-lite')[0], 'low')
-        self.assertEqual(autothink.decide(fail, 'auto-errlow')[0], 'low')
-
-    def test_unknown_variant(self):
-        with self.assertRaises(ValueError):
-            autothink.decide([user()], 'sometimes')
+    def test_only_auto_and_auto_flash(self):
+        self.assertEqual(set(autothink.VARIANTS), {'auto', 'auto-flash'})
+        for name in ('sometimes', 'auto-lite', 'off'):
+            with self.assertRaises(ValueError):
+                autothink.decide([user()], name)
 
 
 class Pooled(unittest.TestCase):

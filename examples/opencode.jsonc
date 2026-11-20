@@ -10,10 +10,8 @@
         "my-model": {
           "name": "My local model",
           "variants": {
-            "off":        { "reasoningEffort": "off" },
             "auto":       { "reasoningEffort": "auto" },
-            "auto-flash": { "reasoningEffort": "auto-flash" },
-            "high":       { "reasoningEffort": "high" }
+            "auto-flash": { "reasoningEffort": "auto-flash" }
           }
         }
       }

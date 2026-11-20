@@ -1,6 +1,6 @@
 """Event-driven thinking for coding agents: pick a reasoning level for each step from what just happened.
 
-The agent asks for reasoning_effort "auto" (or a pooled variant such as "auto-flash"). Instead of thinking on every
+The agent asks for reasoning_effort "auto" or "auto-flash". Instead of thinking on every
 step, this walks back from the newest message and decides:
 
 * a new user message (a new task or instruction)          -> "low"   (plan a little)
@@ -10,7 +10,7 @@ step, this walks back from the newest message and decides:
 A raised level survives up to STICKY_MAX "look-around" steps (reads, searches, ls/cat/grep, git status ...), so the
 model can think while it gathers context, and drops to "none" as soon as it does something real.
 
-Pooled variants ("auto-flash" = 1500 tokens) share ONE thinking budget per phase: a phase starts at a user message or
+"auto-flash" shares ONE 1500-token thinking budget per phase: a phase starts at a user message or
 at a failed tool call and runs through the look-around steps after it. When the pool is spent, the rest of the phase
 runs without thinking. Every new failure opens a fresh pool.
 
@@ -60,10 +60,7 @@ POOL_MIN = 50           # fewer tokens than this left = thinking off for the res
 # reasoning_effort value -> pool size in tokens (None = not pooled)
 VARIANTS = {
     'auto': None,         # new message = low, failure = high, else none
-    'auto-lite': None,    # no planning step; a failure gets low
-    'auto-errlow': None,  # like auto, but a failure gets low instead of high
     'auto-flash': 1500,   # like auto, one 1500-token pool per phase
-    'auto-500': 500,
 }
 
 
@@ -185,10 +182,6 @@ def decide(messages, variant: str, pools: Pools | None = None):
             level, why = 'none', why + ', %d look-arounds (over %d)' % (looks, STICKY_MAX)
         else:
             why += ', still looking (%d)' % looks
-    if variant == 'auto-errlow':
-        level = {'high': 'low'}.get(level, level)
-    if variant == 'auto-lite':
-        level = {'low': 'none', 'high': 'low'}.get(level, level)
     budget = None
     cap = VARIANTS[variant]
     if cap is None or level == 'none':

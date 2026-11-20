@@ -24,12 +24,8 @@ Your agent selects the policy through the `reasoning_effort` field:
 |---|---|
 | `auto` | new message = low, failure = high, else none |
 | `auto-flash` | `auto` with a 1,500-token pool per phase |
-| `auto-500` | `auto` with a 500-token pool per phase |
-| `auto-errlow` | `auto`, but failures get low instead of high |
-| `auto-lite` | no planning step; failures get low |
-| `off` | always none |
 
-Any other value (`low`, `high`, ...) passes through untouched, and so does every request without `reasoning_effort`.
+Any other value (`none`, `low`, `high`, ...) passes through untouched, and so does every request without `reasoning_effort`.
 
 ## Quick start
 
@@ -45,7 +41,7 @@ On every chat request the proxy rewrites:
 
 - `reasoning_effort` to `none`, `low` or `high`;
 - `chat_template_kwargs.enable_thinking` to `true` or `false` (the per-request switch llama.cpp's server and vLLM understand for Qwen-style templates; turn it off with `--no-template-kwargs`);
-- for pooled variants, `thinking_budget_tokens` to what's left in the pool. This only has an effect on servers that support a per-request thinking cap; rename the field with `--budget-field`, or pass `""` to leave it out. Either way, the pool still decides *whether* later steps in the phase think.
+- for `auto-flash`, `thinking_budget_tokens` to what's left in the pool. This only has an effect on servers that support a per-request thinking cap; rename the field with `--budget-field`, or pass `""` to leave it out. Either way, the pool still decides *whether* later steps in the phase think.
 
 Thinking tokens are counted from the streamed `reasoning_content` events (about one per token), or from `usage.completion_tokens_details.reasoning_tokens` on non-streamed replies.
 
@@ -156,23 +152,98 @@ Then delete the folder.
 
 This came out of running OpenCode against a local mixture-of-experts model (Swift 1.5 Flash Next, IQ3_XXS) on four 16 GB Tesla P100s. The proxy here is a clean stand-alone extract of the logic in that setup's bridge.
 
-**One real working day (`auto-flash`, building a feature in a ~55K-line Kotlin Android app):**
+Below is every valid benchmark run from the two days the policy was developed (2026-11-19 and 2026-11-20): 127 runs, each scored by hidden tests the agent never saw.
 
-- 946 model steps. About **88% ran with no thinking.**
-- Thinking switched on 109 times: 19 for new messages, 90 right after failures.
-- The 1,500-token pool ran out only **3 times**.
-- The feature mostly worked after one fix round. The bugs that remained were design mistakes (wrong measurement scaling, a missing tool button), the kind more thinking doesn't obviously prevent. The model also claimed one feature worked when it didn't.
+- **Thinking** is the amount of reasoning text the model streamed, in characters. Token figures are estimates at about 4 characters per token.
+- **Wall clock** is the whole run, including the agent's tool and test commands.
+- **Baselines:** `low` thinks (at low effort) on every step, which was the everyday setting before this. `off` never thinks. There is no "always high" baseline.
 
-**Small benchmarks with hidden tests (OpenCode, same model):**
+### Summary
 
-| Benchmark | `low` (always think a little) | `auto` | `auto-lite` | `off` |
+| | Thinking saved | Wall clock saved | Hidden-test results |
+|---|---|---|---|
+| `auto` vs always-`low`, 8 feature tasks | **46%** (≈6,700 tokens) | **24%** (4.4 min), without the frozen-dialog task* | same: 7/8 vs 7/8 |
+| `auto` vs always-`low`, spreadsheet app (3 runs each) | **20%** (≈4,500 tokens per run) | **11%** (2.9 min per run) | same: 26.0 vs 26.3 of 27 on average |
+| `auto-flash` vs `auto`, one app feature | **46%** (≈3,100 tokens) | **8%** (1.0 min) | both passed |
+
+\* With that task included, `auto` was slower overall on the 8 tasks (36.5 vs 21.8 min). See the note under table A.
+
+Never thinking (`off`) was **not** faster: it needed far more steps and was slower than `low` overall.
+
+### A. 8 feature tasks on a real Python desktop app
+
+Each task has its own hidden tests.
+
+| Setting | Passed | Wall clock, all 8 | Without task F1* | Thinking | Steps |
+|---|---|---|---|---|---|
+| `low` (always think) | 7/8 | 21.8 min | 18.3 min | 57,675 chars (≈14,400 tok) | 106 |
+| **`auto`** | 7/8 | 36.5 min | **13.9 min** | **30,863 chars (≈7,700 tok)** | 104 |
+| `off` (never think) | 7/8 | 31.9 min | 17.9 min | 0 | 190 |
+| `auto-lite` (dropped) | 7/8 | 21.7 min | 18.7 min | 4,588 chars | 154 |
+
+\* On task F1 the `auto` run spent about 12 of its 22.5 minutes waiting on two test commands that froze on a pop-up dialog and ran into their 5- and 7-minute timeouts. That's a test-environment problem, not thinking. The column without F1 removes that task from every setting.
+
+Per task, `auto` vs `low` (wall-clock seconds and thinking characters):
+
+| Task | B1 | T2 | F2 | N1 | B2 | F1 | F3 | N2 |
+|---|---|---|---|---|---|---|---|---|
+| `auto` | pass, 79 s, 1,973 | pass, 126 s, 2,708 | fail, 144 s, 1,272 | pass, 150 s, 3,256 | pass, 70 s, 3,200 | pass, 1,352 s, 7,943 | pass, 141 s, 5,038 | pass, 128 s, 5,473 |
+| `low` | pass, 92 s, 2,279 | pass, 222 s, 9,290 | fail, 182 s, 4,842 | pass, 152 s, 6,767 | pass, 81 s, 3,185 | pass, 210 s, 10,196 | pass, 216 s, 12,632 | pass, 156 s, 8,484 |
+
+### B. Spreadsheet app built from scratch (27 hidden tests)
+
+| Run | Setting | Hidden tests | Wall clock | Thinking (chars) |
 |---|---|---|---|---|
-| Spreadsheet app from scratch, 27 hidden tests | 27 / 26 / 26 passed, 25–27 min | 26 / 27 passed, 22–23 min | 26 passed, 22 min | not run |
-| 8 feature tasks on a real app | 7/8, 21.8 min | 7/8, 14.0 min* | 7/8, 21.7 min | 7/8, 31.9 min, 15 repeats |
+| r5 | `low` | 27/27 | 26.6 min | 88,523 |
+| r6 | `low` | 26/27 | 25.0 min | 78,540 |
+| r7 | `low` | 26/27 | 26.3 min | 104,868 |
+| r1 | `auto` | 25/27 | 24.1 min | 33,587 |
+| r5 | `auto` | 26/27 | 23.0 min | 72,657 |
+| r6 | `auto` | 27/27 | 22.3 min | 111,966 |
+| r7 | `auto-lite` (dropped) | 26/27 | 22.4 min | 31,406 |
+| r1 | `low` | 22/27 | 10.9 min | 91,558 |
+| r2 | `low` | 6/27 | 10.2 min | 42,919 |
 
-\* one run hung and is excluded.
+The two `low` runs at the bottom hit a since-fixed bridge bug that made the model quit after 2 and 10 steps, so they're left out of the averages:
+- **`low` (r5–r7):** 26.3/27, 26.0 min, 90,644 chars (≈22,700 tokens).
+- **`auto` (3 runs):** 26.0/27, 23.1 min, 72,737 chars (≈18,200 tokens).
 
-**What this does *not* show yet.** These are a handful of runs on one model, with no baseline where thinking is *always high*. The results are consistent with "large cut in thinking, little or no loss in quality, often faster", but they don't prove it. A proper test would run the same 10–20 tasks with always-on thinking, `auto-flash` and no thinking, each several times, scored by hidden tests. If you run something like that, please open an issue with your numbers.
+Thinking varied a lot from run to run: one `auto` run (r6) thought more than any `low` run.
+
+### C. `auto-flash` (1,500-token pool)
+
+| Task | Setting | Result | Wall clock | Thinking (chars) | Steps |
+|---|---|---|---|---|---|
+| Feature in a real app | `auto` | pass | 12.2 min | 27,364 | 24 |
+| same task | **`auto-flash`** | pass | 11.2 min | 14,855 | 53 |
+| Larger feature ("drops") | `auto-flash` | fail: 14/15 hidden tests plus one missing import. Our own step-limit watchdog stopped the agent at 300 tool calls, one edit from done | 47.8 min | 25,520 | 354 |
+
+There was no comparison run for the larger feature.
+
+**A real working day with `auto-flash`** (building a feature in a ~55K-line Kotlin Android app, 2026-11-20): 1,055 model steps, **88% with no thinking**. Thinking switched on about 127 times, for new instructions and right after failures, and the 1,500-token pool ran out only 3 times. The feature mostly worked after one fix round. The bugs that remained were design mistakes (wrong measurement scaling, a missing tool button), and the model claimed one feature worked when it didn't. There was no baseline that day, so this shows how little thinking was used, not that quality held.
+
+### D. Other variants we tried and dropped
+
+Same tasks, head to head:
+
+| Comparison | Tasks | Passed | Wall clock | Thinking (chars) |
+|---|---|---|---|---|
+| `auto` vs `auto-smart` (a separate judge decided when to think) | 20 small tasks | 18 vs 17 | 28.0 vs 34.2 min | 69,973 vs 13,818 |
+| `auto` vs `auto-errlow` (failures got low instead of high) | 10 tasks | 10 vs 10 | 23.7 vs 24.3 min | 67,599 vs 74,886 |
+| `auto` vs `auto-500` (500-token pool) | 3 tasks | 3 vs 2 | 4.8 vs 3.8 min | 6,227 vs 5,913 |
+| `auto` vs `auto-errlow`, app feature (first attempt) | 1 | fail vs fail | 13.1 vs 7.3 min | 51,974 vs 16,733 |
+| `auto-500`, app feature | 1 | fail (gave up after 3 steps) | 0.3 min | 1,615 |
+| 2 hard tasks: `off` / `auto` / `auto-smart` / two `auto-smart` tweaks | 2 (`off` ran 1) | 0/1, 0/2, 1/2, 1/2, 1/2 | 15.1, 18.5, 21.7, 22.1, 27.3 min | 0, 13,258, 11,803, 30,596, 30,784 |
+| `auto-smart`, one more hard task | 1 | pass | 14.1 min | 11,152 |
+| `auto-500` with a per-step cap (early try) | 2 | 2 | 3.3 min | 5,677 |
+
+Not counted: 24 runs from benchmark-harness bugs (kept separately and marked invalid), and one run that never started.
+
+### What this does *not* show yet
+
+These are a handful of runs on one model, and run-to-run variation is large. There's no baseline where thinking is *always high*. `auto-flash` has been compared with `auto` on only one task.
+
+The results are consistent with "large cut in thinking, no loss in pass rate, usually faster", but they don't prove it. A proper test would run the same 10–20 tasks with always-on thinking, `auto`, `auto-flash` and no thinking, each several times, scored by hidden tests. If you run something like that, please open an issue with your numbers.
 
 ## Related work
 
