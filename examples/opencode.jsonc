@@ -1,0 +1,22 @@
+// Example OpenCode provider pointing at the proxy. Merge into ~/.config/opencode/opencode.jsonc.
+// Pick the variant in OpenCode's model menu; "auto" / "auto-flash" are decided by the proxy per step.
+{
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local model (auto thinking)",
+      "options": { "baseURL": "http://127.0.0.1:8090/v1" },
+      "models": {
+        "my-model": {
+          "name": "My local model",
+          "variants": {
+            "off":        { "reasoningEffort": "off" },
+            "auto":       { "reasoningEffort": "auto" },
+            "auto-flash": { "reasoningEffort": "auto-flash" },
+            "high":       { "reasoningEffort": "high" }
+          }
+        }
+      }
+    }
+  }
+}
