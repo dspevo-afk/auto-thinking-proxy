@@ -170,6 +170,45 @@ Below is every valid benchmark run from the two days the policy was developed (2
 
 Never thinking (`off`) was **not** faster: it needed far more steps and was slower than `low` overall.
 
+### Accuracy
+
+A run *passes* when the hidden tests pass, plus the project's own checks (lint, existing tests) where the benchmark has them.
+
+**Same tasks, different settings:**
+
+| Benchmark | always-`low` | `auto` | `auto-flash` | `off` |
+|---|---|---|---|---|
+| 8 feature tasks | 7/8 | 7/8 | not run | 7/8 |
+| Spreadsheet app, hidden tests over 3 runs | 79/81 (97.5%) | 78/81 (96.3%) | not run | not run |
+| App feature (one task, 11-20) | not run | pass | pass | not run |
+| Hard task "CO" | not run | fail (3 of 6 hidden tests failed) | not run | fail (1 of 6 failed) |
+
+On the 8 feature tasks the outcome was identical **task by task**: all four settings passed the same 7 tasks and failed the same one (F2) on the same hidden test. That points to F2 being beyond this model, not to the thinking setting.
+
+**All `auto` runs:** 39 of 45 task runs passed (87%), plus 78/81 hidden tests on the spreadsheet runs. The failures:
+- F2 (failed by every setting);
+- two small tasks: one also failed by `auto-smart`, the other passed by `auto-smart`;
+- the two hard round-C tasks;
+- the first attempt at the app feature (1 of 34 hidden tests failed). It passed on the second attempt.
+
+**`auto-flash`:**
+- Passed the app feature, the one task it shares with `auto`.
+- Failed the larger "drops" feature: 14 of 15 hidden tests passed, plus one missing import, after our own watchdog stopped the agent at 300 tool calls.
+- On the real working day, the feature mostly worked after one fix round. The remaining bugs were design mistakes: measurements inside a zoomed view came out wrong, a tool button was missing, and the model claimed one thing worked when it didn't.
+
+**Failures by cause, across all 127 runs:**
+
+| Cause | Runs |
+|---|---|
+| A task every setting failed the same way (F2) | 4 |
+| Hidden tests passed, but the project's own check failed (task "XB", every setting that ran it) | 4 |
+| One or more hidden tests failed (small tasks, app feature, CO, drops) | 11 |
+| Too little thinking: the 500-token pool gave up after 3 steps on the app feature | 1 |
+
+That last row is why `auto-500` was dropped. 1,500 tokens (`auto-flash`) was the smallest pool that didn't make the model give up.
+
+**How much these numbers can tell you:** with 8 or 20 tasks per comparison, a difference of one task is noise. These benchmarks would catch a *large* accuracy drop, and none showed one: the biggest gap against always-`low` is 1 hidden test out of 81. They can't rule out a small drop. The same goes for `auto-flash`, which has only one head-to-head task with `auto`.
+
 ### A. 8 feature tasks on a real Python desktop app
 
 Each task has its own hidden tests.
